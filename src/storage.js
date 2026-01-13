@@ -1,56 +1,39 @@
-import { createClient } from 'redis';
+import TelegramStorage from '@tupkalov/telegramthread-redis-storage';
 import AIMessage from './AIMessage.js';
 
-const PREFIX = process.env.REDIS_PREFIX ? process.env.REDIS_PREFIX + "_" : "";
-var client;
+// Создаем экземпляр storage с настройками из переменных окружения
+const storage = new TelegramStorage({
+    redisUrl: process.env.REDIS_URL || 'redis://redis:6379',
+    prefix: process.env.REDIS_PREFIX || '',
+    ttl: 60 * 60 * 24 * 7 // 7 дней
+});
+
+// Подключаемся к Redis при инициализации модуля
 (async () => {
-    client = await createClient({ url: "redis://redis:6379" })
-        .on("error", error => {
-            console.error("Redis error: " + error);
-        })
-        .connect();
-        
-})()
+    try {
+        await storage.connect();
+    } catch (error) {
+        console.error("Failed to connect to Redis:", error);
+    }
+})();
 
+// Экспортируем адаптер для обратной совместимости
 export default {
-    async getChainFrom (origMessage, { maxCount = 10 } = {}) {
-        var message = origMessage;
-        const messages = [];
-        const onlyReply = origMessage.chat.data.type === "supergroup";
-
-        while (maxCount--) {
-            let messageId;
-            if (message.isReply() || onlyReply) {
-                messageId = message.getReplyId();
-            } else {
-                ;[messageId] = await client.sendCommand(["ZRANGE", `${PREFIX}messages:{${origMessage.chat.id}}`, `${message.date - 1}`, "0", "BYSCORE", "REV", "LIMIT", "0", "1"]);
-            }
-
-            if (!messageId) break;
-
-            const messageData = await client.GET(`${PREFIX}message:{${origMessage.chat.id}}:${messageId}`);
-            
-            if (!messageData) break;
-            message = new AIMessage(JSON.parse(messageData));
-            messages.push(message);
-        }
-        
-        return messages;
+    async getChainFrom(origMessage, { maxCount = 10 } = {}) {
+        const messages = await storage.getChainFrom(origMessage, { maxCount });
+        // Преобразуем обратно в AIMessage объекты для совместимости
+        return messages.map(msg => new AIMessage(msg));
     },
 
     async save(...messages) {
-        for (const message of messages) {
-            await client.SET(`${PREFIX}message:{${message.chat.id}}:${message.id}`, JSON.stringify(message), 'EX', 60 * 60 * 24 * 7);
-            await client.ZADD(`${PREFIX}messages:{${message.chat.id}}`, [ { score: message.date, value: message.id.toString() } ]);
-        }
+        await storage.save(messages);
     },
 
     async clearByChatId(chatId) {
-        const messageIds = await client.ZRANGE(`${PREFIX}messages:{${chatId}}`, 0, -1);
-        for (const messageId of messageIds) {
-            await client.DEL(`${PREFIX}message:{${chatId}}:${messageId}`);
-        }
-        await client.DEL(`${PREFIX}messages:{${chatId}}`);
+        await storage.clearByChatId(chatId);
     }
 }
+
+// Экспортируем сам storage для расширенных возможностей (метаданные и т.д.)
+export { storage };
 

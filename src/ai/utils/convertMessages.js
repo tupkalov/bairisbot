@@ -8,8 +8,6 @@ export default async function convertMessages(chatHistory, capabilities = {}) {
     const output = [];
 
     for (const message of chatHistory) {
-        
-
         if (!(message instanceof Message)) throw new AppError("Invalid typeof input message", { info: { message } });
         
         // Инпут текст
@@ -35,17 +33,24 @@ export default async function convertMessages(chatHistory, capabilities = {}) {
             } else {
                 // Не все модели поддерживают инпут изображения
                 if (!imageCapability) continue;
-                const fileUrl = await message.bot.getFileLink(message.getFileId());
+                const fileIds = Array.isArray(message?.data?.albumFileIds) && message.data.albumFileIds.length
+                    ? message.data.albumFileIds
+                    : [message.getFileId()];
 
                 const messageObject = {
                     role: "user",
-                    content: [{
+                    content: []
+                };
+
+                for (const fileId of fileIds) {
+                    const fileUrl = await message.bot.getFileLink(fileId);
+                    messageObject.content.push({
                         type: "image_url",
                         image_url: {
                             url: fileUrl
                         }
-                    }]
-                };
+                    });
+                }
 
                 // Добавляем описание если его добавляли
                 const caption = message.getText();
